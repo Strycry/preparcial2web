@@ -103,7 +103,7 @@
 
   DELETE http://localhost:3000/travel-plans/:id
 
-  ## Reporte de cambios (Parte 3 — documentación requerida)
+  ## Reporte de cambios (Parte 3)
 
   Se implementó la inserción individual de gastos como un arreglo embebido `expenses` dentro del documento `TravelPlan` en MongoDB. La operación para añadir un gasto utiliza la actualización atómica de MongoDB con `$push` (ej. `findByIdAndUpdate(id, { $push: { expenses: expense } }, { new: true })`), lo que garantiza que los gastos se agregan incrementalmente sin sobrescribir el arreglo existente.
 
@@ -123,8 +123,5 @@
   6. Obtener el plan con `GET /travel-plans/:id` y confirmar que `expenses` contiene todos los gastos añadidos.
   7. Eliminar el plan con `DELETE /travel-plans/:id` y comprobar respuesta 200.
 
-  ## Notas finales
-
-  - Este `README.md` cumple con los requisitos del preparcial y la Parte 3 (guía de ejecución y reporte técnico). Si quieres, puedo generar un `curl` o colección Postman exportable con los pasos anteriores.
 
 
