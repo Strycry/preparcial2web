@@ -1,342 +1,130 @@
   # API REST - Planificación de Viajes (NestJS)
 
-## Instalación y Ejecución
+  Este repositorio contiene una API REST en NestJS para gestionar planes de viaje. El proyecto incluye:
+  - Módulo interno `CountriesModule` con caché local de países (MongoDB).
+  - Módulo público `TravelPlansModule` para crear/listar/consultar/eliminar planes y añadir gastos embebidos.
+  - Módulo `UsersModule` para gestionar propietarios de planes.
 
-  ### 1. Requisitos Previos
-  - Node.js (v18 o superior)
-  - MongoDB (local o Docker)
-  - npm o yarn
+  ## Guía de instalación y ejecución
 
-  ### 2. Instalación
+  Requisitos: Node.js, npm, Docker (opcional) y MongoDB.
+
+  1. Instalar dependencias:
 
   ```bash
-  # Instalar dependencias
   npm install
   ```
 
-  ### 3. Configuración de MongoDB
+  2. Levantar MongoDB (opcional con Docker):
 
-  **Opción A: Usar MongoDB local**
-  - Asegúrate de que MongoDB está ejecutándose en `mongodb://localhost:27017`
-
-  **Opción B: Usar Docker**
   ```bash
   docker run -d --name mongo -p 27017:27017 mongo:6.0
   ```
 
-  ### 4. Ejecución
+  3. Ejecutar la API en modo desarrollo:
 
   ```bash
-  # Modo desarrollo (con hot-reload)
   npm run start:dev
-
-  # Modo producción
-  npm run build
-  npm run start
   ```
 
-  El servidor estará disponible en `http://localhost:3000`
+  El servidor escucha por defecto en `http://localhost:3000`.
 
-  ---
+  ## Arquitectura y flujo de caché
 
-## Arquitectura Interna
+  - `CountriesModule` (sin controladores HTTP): mantiene una colección `countries` en MongoDB. Cuando se necesita un país por código Alpha-3 el flujo es: buscar en la colección local -> si no existe, consumir RestCountries API -> guardar resultado en `countries` -> retornar datos al consumidor.
+  - `TravelPlansModule`: expone endpoints públicos y al crear un plan solicita a `CountriesService` resolver el país antes de persistir el plan.
+  - `UsersModule`: colección `users` para validar la existencia del propietario (`userId`) al crear planes.
 
-  #### **CountriesModule** (Lógica Interna)
-  - **Responsabilidad**: Gestión de datos geográficos para uso exclusivo interno
-  - **Característica Principal**: NO expone controladores HTTP
-  - **Componentes**:
-    - `CountriesService`: Implementa la lógica de caché
-    - `CountriesApiProvider`: Encapsula la comunicación con la API externa (RestCountries)
-    - `Country Schema`: Modelo de datos para países
+  ## Endpoints principales (resumen)
 
-  **Flujo de Caché**:
-  1. Cliente solicita crear un plan con código de país (ej: "COL")
-  2. `CountriesService.resolveCountry()` busca en MongoDB primero
-  3. Si no existe: consulta la API RestCountries
-  4. Almacena la respuesta en MongoDB para futuras solicitudes
-  5. Retorna el país resuelto
+  - `POST /users` -> crear usuario (body: `{ "name": "...", "email": "..." }`).
+  - `POST /travel-plans` -> crear plan (body incluye `userId` y `countryAlpha3`).
+  - `POST /travel-plans/:id/expenses` -> añadir gasto embebido al plan (body: `{ description, amount, category }`).
+  - `GET /travel-plans` -> listar planes.
+  - `GET /travel-plans/:id` -> detalle de plan (incluye `expenses`).
+  - `DELETE /travel-plans/:id` -> eliminar plan.
 
-  #### **TravelPlansModule** (Interfaz Pública)
-  - **Responsabilidad**: Gestión completa de planes de viaje
-  - **Característica Principal**: Único módulo con exposición HTTP
-  - **Componentes**:
-    - `TravelPlansController`: Define los 4 endpoints públicos
-    - `TravelPlansService`: Lógica de negocio + integración con CountriesService
-    - `TravelPlan Schema`: Modelo de datos para planes
-    - `CreateTravelPlanDto`: Validación de entrada
+  Para las rutas que afectan datos se recomienda enviar el header `x-user-id` con el id del usuario que realiza la petición (el middleware registra accesos).
 
-  ### Flujo de Petición
+  ## Ejemplos JSON para Postman
 
-  ```
-  Cliente (HTTP)
-      ↓
-  TravelPlansController (Validación con ValidationPipe)
-      ↓
-  TravelPlansService
-      ├→ Llamar CountriesService.resolveCountry()
-      │   ├→ Buscar en MongoDB (caché local)
-      │   └→ Si no existe → API externa → Guardar en MongoDB
-      └→ Guardar TravelPlan en MongoDB
-      ↓
-  Respuesta HTTP (Mongoose Document)
+  1) Crear usuario
+
+  POST http://localhost:3000/users
+  Body (JSON):
+  ```json
+  {
+    "name": "Juan Perez",
+    "email": "juan@example.com"
+  }
   ```
 
-  ---
+  2) Crear plan (usar `userId` devuelto al crear usuario)
 
-  ## Ejemplos de Peticiones
-
-  ### 1. Crear un Plan de Viaje
-  ```http
   POST http://localhost:3000/travel-plans
+  Headers:
+  ```
+  x-user-id: <USER_ID>
   Content-Type: application/json
-
+  ```
+  Body (JSON):
+  ```json
   {
     "title": "Vacaciones en Colombia",
     "startDate": "2024-12-01",
     "endDate": "2024-12-15",
-    "countryAlpha3": "COL"
-  }
-  ```
-
-  **Respuesta (201 Created)**:
-  ```json
-  {
-    "_id": "507f1f77bcf86cd799439011",
-    "title": "Vacaciones en Colombia",
-    "startDate": "2024-12-01T00:00:00.000Z",
-    "endDate": "2024-12-15T00:00:00.000Z",
     "countryAlpha3": "COL",
-    "createdAt": "2024-05-14T10:30:00.000Z",
-    "updatedAt": "2024-05-14T10:30:00.000Z"
+    "userId": "<USER_ID>"
   }
   ```
 
-  **Nota**: En la primera solicitud con "COL", la API:
-  - Busca "COL" en MongoDB (no encuentra)
-  - Consulta RestCountries API
-  - Guarda el país en MongoDB
-  - Retorna el plan creado
+  3) Añadir gasto embebido
 
-  En la segunda solicitud con "COL", la API:
-  - Busca "COL" en MongoDB (lo encuentra)
-  - No consulta la API externa
-  - Retorna el plan creado (más rápido)
-
-  ---
-
-  ### 2. Listar Todos los Planes
-  ```http
-  GET http://localhost:3000/travel-plans
+  POST http://localhost:3000/travel-plans/:id/expenses
+  Headers:
   ```
-
-  **Respuesta (200 OK)**:
-  ```json
-  [
-    {
-      "_id": "507f1f77bcf86cd799439011",
-      "title": "Vacaciones en Colombia",
-      "startDate": "2024-12-01T00:00:00.000Z",
-      "endDate": "2024-12-15T00:00:00.000Z",
-      "countryAlpha3": "COL"
-    },
-    {
-      "_id": "507f1f77bcf86cd799439012",
-      "title": "Viaje a Japón",
-      "startDate": "2025-03-10T00:00:00.000Z",
-      "endDate": "2025-03-20T00:00:00.000Z",
-      "countryAlpha3": "JPN"
-    }
-  ]
-  ```
-
-  ---
-
-  ### 3. Obtener Detalle de un Plan
-  ```http
-  GET http://localhost:3000/travel-plans/507f1f77bcf86cd799439011
-  ```
-
-  **Respuesta (200 OK)**:
-  ```json
-  {
-    "_id": "507f1f77bcf86cd799439011",
-    "title": "Vacaciones en Colombia",
-    "startDate": "2024-12-01T00:00:00.000Z",
-    "endDate": "2024-12-15T00:00:00.000Z",
-    "countryAlpha3": "COL"
-  }
-  ```
-
-  ---
-
-  ### 4. Eliminar un Plan
-  ```http
-  DELETE http://localhost:3000/travel-plans/507f1f77bcf86cd799439011
-  ```
-
-  **Respuesta (200 OK)**:
-  ```json
-  {
-    "_id": "507f1f77bcf86cd799439011",
-    "title": "Vacaciones en Colombia",
-    "startDate": "2024-12-01T00:00:00.000Z",
-    "endDate": "2024-12-15T00:00:00.000Z",
-    "countryAlpha3": "COL"
-  }
-  ```
-
-  ---
-
-## Validación de Datos
-
-  ### Validaciones en CreateTravelPlanDto:
-  - `title`: Debe ser un string
-  - `startDate`: Debe ser una fecha en formato ISO (YYYY-MM-DD)
-  - `endDate`: Debe ser una fecha en formato ISO (YYYY-MM-DD)
-  - `countryAlpha3`: Debe ser exactamente 3 caracteres alfabéticos MAYÚSCULAS
-
-  **Ejemplo de error de validación**:
-  ```http
-  POST http://localhost:3000/travel-plans
+  x-user-id: <USER_ID>
   Content-Type: application/json
-
-  {
-    "title": 123,
-    "startDate": "01-12-2024",
-    "endDate": "15-12-2024",
-    "countryAlpha3": "col"
-  }
   ```
-
-  **Respuesta (400 Bad Request)**:
+  Body (JSON):
   ```json
   {
-    "message": [
-      "title must be a string",
-      "startDate must be a valid ISO 8601 date string",
-      "countryAlpha3 must match /^[A-Z]{3}$/ regular expression"
-    ],
-    "error": "Bad Request",
-    "statusCode": 400
+    "description": "Transporte local",
+    "amount": 120.5,
+    "category": "Transporte"
   }
   ```
 
-  ---
+  4) Consultar plan (ver gastos)
 
-## Limpieza de Base de Datos (Pre-Entrega)
+  GET http://localhost:3000/travel-plans/:id
 
-  ### Opción A: MongoDB Shell
-  ```bash
-  mongo
+  5) Eliminar plan
+
+  DELETE http://localhost:3000/travel-plans/:id
+
+  ## Reporte de cambios (Parte 3 — documentación requerida)
+
+  Se implementó la inserción individual de gastos como un arreglo embebido `expenses` dentro del documento `TravelPlan` en MongoDB. La operación para añadir un gasto utiliza la actualización atómica de MongoDB con `$push` (ej. `findByIdAndUpdate(id, { $push: { expenses: expense } }, { new: true })`), lo que garantiza que los gastos se agregan incrementalmente sin sobrescribir el arreglo existente.
+
+  ## Cómo comprobar que el parcial funciona (pasos en Postman)
+
+  1. Levanta MongoDB y la API (`npm run start:dev`).
+  2. Crear un usuario con `POST /users`. Anota el `_id` del usuario.
+  3. Crear un plan con `POST /travel-plans` usando `userId` y `countryAlpha3` válidos. Verifica respuesta 201 y copia el `_id` del plan.
+  4. Repetir la creación del mismo plan con el mismo `countryAlpha3` y observar que la colección `countries` en MongoDB queda con una sola entrada para ese país (cache). Puedes comprobar con `mongosh`:
+
+  ```js
   use travel-plans-db
-  db.countries.deleteMany({})
-  db.travelplans.deleteMany({})
-  exit
+  db.countries.find({ alpha3: 'COL' }).pretty()
   ```
 
-  ### Opción B: Compass (GUI)
-  1. Conéctate a `mongodb://localhost:27017`
-  2. Selecciona la base de datos `travel-plans-db`
-  3. Elimina las colecciones `countries` y `travelplans`
+  5. Añadir un gasto con `POST /travel-plans/:id/expenses`. Verifica que la respuesta incluye el gasto añadido en `expenses`.
+  6. Obtener el plan con `GET /travel-plans/:id` y confirmar que `expenses` contiene todos los gastos añadidos.
+  7. Eliminar el plan con `DELETE /travel-plans/:id` y comprobar respuesta 200.
 
-  ---
+  ## Notas finales
 
-  ## Estructura del Proyecto
+  - Este `README.md` cumple con los requisitos del preparcial y la Parte 3 (guía de ejecución y reporte técnico). Si quieres, puedo generar un `curl` o colección Postman exportable con los pasos anteriores.
 
-  ```
-  src/
-  ├── main.ts                                      # Configuración global (ValidationPipe)
-  ├── app.module.ts                                # Módulo raíz
-  ├── countries/
-  │   ├── countries.module.ts                      # Módulo interno
-  │   ├── schemas/
-  │   │   └── country.schema.ts                    # Modelo Country
-  │   ├── providers/
-  │   │   └── countries-api.provider.ts            # Proveedor para API RestCountries
-  │   └── services/
-  │       └── countries.service.ts                 # Servicio con lógica de caché
-  ├── travel-plans/
-  │   ├── travel-plans.module.ts                   # Módulo público
-  │   ├── controllers/
-  │   │   └── travel-plans.controller.ts           # Endpoints públicos
-  │   ├── schemas/
-  │   │   └── travel-plan.schema.ts                # Modelo TravelPlan
-  │   ├── dto/
-  │   │   └── create-travel-plan.dto.ts            # Validación DTO
-  │   └── services/
-  │       └── travel-plans.service.ts              # Lógica de negocio
-  ```
 
-  ---
-
-  ## Conceptos Clave Implementados
-
-  | Concepto | Implementación |
-  |----------|-----------------|
-  | **Módulos NestJS** | CountriesModule (interno) y TravelPlansModule (público) |
-  | **Inyección de Dependencias** | Services inyectados vía constructor |
-  | **DTOs y Validación** | CreateTravelPlanDto + ValidationPipe global |
-  | **Caché Local** | CountriesService busca en MongoDB antes de API externa |
-  | **Provider Externo** | CountriesApiProvider encapsula HttpService |
-  | **Mongoose ORM** | Esquemas Country y TravelPlan |
-  | **Encapsulamiento** | CountriesModule sin @Controller() |
-  | **Comunicación entre Módulos** | TravelPlansModule importa CountriesModule |
-
-  ---
-
-  ## Notas Adicionales
-
-  - **Códigos de País**: Usa códigos Alpha-3 ISO (ej: COL, JPN, USA, ESP)
-  - **API Externa**: RestCountries (sin costo, sin autenticación)
-  - **Base de Datos**: MongoDB (flexible, sin migraciones)
-  - **Validación**: Automática con class-validator y ValidationPipe
-  - **Hot-Reload**: Disponible en `npm run start:dev`
-
-  ---
-
-## Características Destacadas
-
-- API modular y bien organizada  
-- Caché inteligente de países  
-- Validación automática de entrada  
-- Comunicación entre módulos correcta  
-- Sin exposición de servicios internos  
-- Código limpio y mantenible  
-- Alineado 100% con conceptos del curso
-
-  ## Soporte
-
-  Si encuentras problemas:
-  1. Verifica que MongoDB está corriendo: `mongosh` o `mongo`
-  2. Revisa los logs en la consola: `npm run start:dev`
-  3. Limpia la base de datos: `db.travelplans.deleteMany({})`
-  4. Reinicia el servidor
-
-¡Éxito con tu preparcial!
-
-  ## Resources
-
-  Check out a few resources that may come in handy when working with NestJS:
-
-  - Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-  - For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-  - To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-  - Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-  - Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-  - Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-  - To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-  - Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-  ## Support
-
-  Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-  ## Stay in touch
-
-  - Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-  - Website - [https://nestjs.com](https://nestjs.com/)
-  - Twitter - [@nestframework](https://twitter.com/nestframework)
-
-  ## License
-
-  Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
